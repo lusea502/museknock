@@ -140,37 +140,18 @@ export async function encryptWebPassword(password: string, keyId: number, public
   }
 }
 
-function accountLabel(account: Json): string {
-  const status = string(account.account_status) ?? '?'
-  const profiles = Array.isArray(account.profiles) ? account.profiles : []
-  const names = profiles.flatMap(profile => {
-    if (!profile || typeof profile !== 'object') return []
-    const item = profile as Json
-    const name = string(item.name) ?? string(item.display_name) ?? string(item.profile_name)
-    return name ? [name.slice(0, 30)] : []
-  })
-  return `status=${status}${names.length ? ` name=${names.join('/')}` : ''}`
-}
-
 async function acceptCredentials(session: BrowserSetupSession, data: Json, sdkToken: string, request: Request,
-  otpCode?: string) {
-  if (data.registration_state === 'account_selection_required' && Array.isArray(data.accounts) && data.accounts.length) {
+  otpCode?: string, selectionAttempted = false) {
+  if (data.registration_state === 'account_selection_required' && Array.isArray(data.accounts)) {
     const accounts = data.accounts.filter(entry => entry && typeof entry === 'object') as Json[]
-    const labels = accounts.map((account, index) => `a${index + 1}: ${accountLabel(account)}`).join('; ')
-    const firstId = accounts[0].account_id
-    const describe = (label: string, run: () => Promise<Json>) => run().then(selected =>
-      `${label}: state=${string(selected.registration_state) ?? '-'} keys=${Object.keys(selected).join(',')}`,
-    ).catch((error: unknown) => error instanceof AuthError
-      ? `${label}: HTTP ${error.status} ${string(error.problem.type) ?? ''}`.trim()
-      : `${label}: ${error instanceof Error ? error.message.slice(0, 50) : 'unknown'}`)
-    const attempts: string[] = []
-    if ((typeof firstId === 'string' || typeof firstId === 'number') && otpCode) {
-      attempts.push(await describe('A(otp+id)',
-        () => postWeb(session, '/api/auth/native/confirm-otp', { otp_code: otpCode, account_id: firstId, return_to: '/' }, request)))
-      attempts.push(await describe('B(select-account)',
-        () => postWeb(session, '/api/auth/native/select-account', { account_id: firstId }, request)))
+    const accountId = accounts[0]?.account_id
+    if (selectionAttempted || (typeof accountId !== 'string' && typeof accountId !== 'number')) {
+      session.stage = 'error'
+      session.error = { kind: 'manual_check' }
+      return { session }
     }
-    throw new Error(`account selection probe — ${labels}; ${attempts.join('; ') || 'no probe'}`)
+    const selected = await postWeb(session, '/api/auth/native/select-account', { account_id: accountId }, request)
+    return acceptCredentials(session, selected, sdkToken, request, otpCode, true)
   }
   if (data.checkpoint_required || data.checkpoint_url || data.reactivation_required || data.account_selection_required) {
     session.stage = 'error'
