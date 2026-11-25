@@ -30,7 +30,8 @@ export type BrowserSetupSession = {
 
 export type BrowserSetupIssue =
   | { kind: 'upstream'; status: number; type?: string; detail?: string }
-  | { kind: 'manual_check' | 'invalid_step' | 'generic' }
+  | { kind: 'generic'; detail?: string }
+  | { kind: 'manual_check' | 'invalid_step' }
 
 class AuthError extends Error {
   constructor(readonly status: number, readonly problem: Json) {
@@ -49,11 +50,11 @@ function string(value: unknown): string | undefined {
 
 async function jsonResponse(response: Response): Promise<Json> {
   const bytes = await response.arrayBuffer()
-  if (bytes.byteLength > maxResponseBytes) throw new Error('Muse response too large')
+  if (bytes.byteLength > maxResponseBytes) throw new Error(`Muse response too large (HTTP ${response.status})`)
   if (response.ok && bytes.byteLength === 0) return {}
   let data: Json
   try { data = object(JSON.parse(new TextDecoder().decode(bytes))) }
-  catch { throw new Error('Invalid Muse response') }
+  catch { throw new Error(`Invalid Muse response (HTTP ${response.status})`) }
   if (!response.ok) throw new AuthError(response.status, data)
   return data
 }
@@ -163,7 +164,7 @@ async function acceptCredentials(session: BrowserSetupSession, data: Json, sdkTo
   }
   const meta = data.auth_meta_session ? object(data.auth_meta_session) : null
   const frl = meta && string(meta.frl_access_token)
-  if (!frl) throw new Error('Muse login did not return a session')
+  if (!frl) throw new Error(`Muse login did not return a session (keys: ${Object.keys(data).join(', ') || 'none'})`)
   const exchanged = await postHatch('/hatch/login', { frl_access_token: frl }, frl, request)
   const access = string(exchanged.access_token)
   if (!access || !string(exchanged.abra_user_id)) throw new Error('Muse did not return a Hatch session')
@@ -244,7 +245,10 @@ export function browserSetupError(error: unknown): BrowserSetupIssue {
       ...(type && /^[A-Za-z0-9_./-]{1,100}$/.test(type) ? { type } : {}),
       ...(detail ? { detail } : {}) }
   }
-  return error instanceof Error && error.message === 'Invalid login step'
-    ? { kind: 'invalid_step' }
-    : { kind: 'generic' }
+  if (error instanceof Error && error.message === 'Invalid login step') return { kind: 'invalid_step' }
+  if (error instanceof Error) {
+    const detail = error.message.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 200)
+    return { kind: 'generic', ...(detail ? { detail } : {}) }
+  }
+  return { kind: 'generic' }
 }
