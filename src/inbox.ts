@@ -590,10 +590,13 @@ export class Inbox extends DurableObject<MuseBindings> {
       if (!vm) return { error: 'The registered Muse VM is no longer leased to this device.' }
       if (await sideChatExists(vm, sessionId)) return { vmId: vm.vmId }
       return { error: 'Side chat not found on the selected Muse VM. Check the session ID.' }
-    } catch {
+    } catch (error) {
       if (this.ctx.storage.kv.get(`rejected:${this.pairing}`))
         return { error: 'Muse rejected the saved device credentials. Start pairing again to check recovery options.' }
-      return { error: 'Could not verify the side chat with Muse. Check the device and VM lease, then retry.' }
+      const detail = error instanceof Error
+        ? error.message.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 160)
+        : 'unknown error'
+      return { error: `Could not verify the side chat with Muse. Check the device and VM lease, then retry. (${detail})` }
     }
   }
 
