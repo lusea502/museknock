@@ -140,7 +140,36 @@ export async function encryptWebPassword(password: string, keyId: number, public
   }
 }
 
+function accountLabel(account: Json): string {
+  const status = string(account.account_status) ?? '?'
+  const profiles = Array.isArray(account.profiles) ? account.profiles : []
+  const names = profiles.flatMap(profile => {
+    if (!profile || typeof profile !== 'object') return []
+    const item = profile as Json
+    const name = string(item.name) ?? string(item.display_name) ?? string(item.profile_name)
+    return name ? [name.slice(0, 30)] : []
+  })
+  return `status=${status}${names.length ? ` name=${names.join('/')}` : ''}`
+}
+
 async function acceptCredentials(session: BrowserSetupSession, data: Json, sdkToken: string, request: Request) {
+  if (data.registration_state === 'account_selection_required' && Array.isArray(data.accounts) && data.accounts.length) {
+    const accounts = data.accounts.filter(entry => entry && typeof entry === 'object') as Json[]
+    const labels = accounts.map((account, index) => `a${index + 1}: ${accountLabel(account)}`).join('; ')
+    let probe = 'no-id'
+    const firstId = accounts[0].account_id
+    if (typeof firstId === 'string' || typeof firstId === 'number') {
+      try {
+        const selected = await postWeb(session, '/api/auth/native/confirm-otp', { account_id: firstId }, request)
+        const state = string(selected.registration_state) ?? '-'
+        probe = `state=${state} keys=${Object.keys(selected).join(',')}`
+      } catch (error) {
+        probe = error instanceof AuthError ? `HTTP ${error.status} ${string(error.problem.type) ?? ''}`.trim()
+          : error instanceof Error ? error.message.slice(0, 60) : 'unknown'
+      }
+    }
+    throw new Error(`account selection probe — ${labels}; probe(a1 confirm-otp+account_id): ${probe}`)
+  }
   if (data.checkpoint_required || data.checkpoint_url || data.reactivation_required || data.account_selection_required) {
     session.stage = 'error'
     session.error = { kind: 'manual_check' }
