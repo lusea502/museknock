@@ -164,7 +164,13 @@ async function acceptCredentials(session: BrowserSetupSession, data: Json, sdkTo
   }
   const meta = data.auth_meta_session ? object(data.auth_meta_session) : null
   const frl = meta && string(meta.frl_access_token)
-  if (!frl) throw new Error(`Muse login did not return a session (keys: ${Object.keys(data).join(', ') || 'none'})`)
+  if (!frl) {
+    const state = string(data.registration_state) ?? 'none'
+    const accounts = Array.isArray(data.accounts) ? data.accounts : null
+    const first = accounts?.[0]
+    const firstKeys = first && typeof first === 'object' ? Object.keys(first as Json).join(',') : ''
+    throw new Error(`Muse login did not return a session (state: ${state}; accounts: ${accounts ? accounts.length : 'no'}${firstKeys ? `; account keys: ${firstKeys}` : ''})`)
+  }
   const exchanged = await postHatch('/hatch/login', { frl_access_token: frl }, frl, request)
   const access = string(exchanged.access_token)
   if (!access || !string(exchanged.abra_user_id)) throw new Error('Muse did not return a Hatch session')
@@ -240,14 +246,14 @@ export function browserSetupError(error: unknown): BrowserSetupIssue {
     const type = string(error.problem.type)
     const rawDetail = string(error.problem.message) ?? string(error.problem.error_message) ??
       string(error.problem.detail) ?? string(error.problem.error_description)
-    const detail = rawDetail?.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 200)
+    const detail = rawDetail?.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 320)
     return { kind: 'upstream', status: error.status,
       ...(type && /^[A-Za-z0-9_./-]{1,100}$/.test(type) ? { type } : {}),
       ...(detail ? { detail } : {}) }
   }
   if (error instanceof Error && error.message === 'Invalid login step') return { kind: 'invalid_step' }
   if (error instanceof Error) {
-    const detail = error.message.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 200)
+    const detail = error.message.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 320)
     return { kind: 'generic', ...(detail ? { detail } : {}) }
   }
   return { kind: 'generic' }
