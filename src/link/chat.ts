@@ -240,7 +240,7 @@ async function withLink<T>(
     socket = (response as Response & { webSocket?: typeof socket }).webSocket
     if (response.status !== 101 || !socket) {
       await response.body?.cancel()
-      throw new Error('Muse Link upgrade failed')
+      throw new Error(`Muse Link upgrade failed (HTTP ${response.status})`)
     }
     socket.accept()
     return await run(socket, controller.signal)
