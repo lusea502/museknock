@@ -144,7 +144,7 @@ async function acceptCredentials(session: BrowserSetupSession, data: Json, sdkTo
   otpCode?: string, selectionAttempted = false) {
   if (data.registration_state === 'account_selection_required' && Array.isArray(data.accounts)) {
     const accounts = data.accounts.filter(entry => entry && typeof entry === 'object') as Json[]
-    const accountId = accounts[0]?.account_id
+    const accountId = accounts[accounts.length - 1]?.account_id
     if (selectionAttempted || (typeof accountId !== 'string' && typeof accountId !== 'number')) {
       session.stage = 'error'
       session.error = { kind: 'manual_check' }
