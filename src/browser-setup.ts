@@ -152,23 +152,25 @@ function accountLabel(account: Json): string {
   return `status=${status}${names.length ? ` name=${names.join('/')}` : ''}`
 }
 
-async function acceptCredentials(session: BrowserSetupSession, data: Json, sdkToken: string, request: Request) {
+async function acceptCredentials(session: BrowserSetupSession, data: Json, sdkToken: string, request: Request,
+  otpCode?: string) {
   if (data.registration_state === 'account_selection_required' && Array.isArray(data.accounts) && data.accounts.length) {
     const accounts = data.accounts.filter(entry => entry && typeof entry === 'object') as Json[]
     const labels = accounts.map((account, index) => `a${index + 1}: ${accountLabel(account)}`).join('; ')
-    let probe = 'no-id'
     const firstId = accounts[0].account_id
-    if (typeof firstId === 'string' || typeof firstId === 'number') {
-      try {
-        const selected = await postWeb(session, '/api/auth/native/confirm-otp', { account_id: firstId }, request)
-        const state = string(selected.registration_state) ?? '-'
-        probe = `state=${state} keys=${Object.keys(selected).join(',')}`
-      } catch (error) {
-        probe = error instanceof AuthError ? `HTTP ${error.status} ${string(error.problem.type) ?? ''}`.trim()
-          : error instanceof Error ? error.message.slice(0, 60) : 'unknown'
-      }
+    const describe = (label: string, run: () => Promise<Json>) => run().then(selected =>
+      `${label}: state=${string(selected.registration_state) ?? '-'} keys=${Object.keys(selected).join(',')}`,
+    ).catch((error: unknown) => error instanceof AuthError
+      ? `${label}: HTTP ${error.status} ${string(error.problem.type) ?? ''}`.trim()
+      : `${label}: ${error instanceof Error ? error.message.slice(0, 50) : 'unknown'}`)
+    const attempts: string[] = []
+    if ((typeof firstId === 'string' || typeof firstId === 'number') && otpCode) {
+      attempts.push(await describe('A(otp+id)',
+        () => postWeb(session, '/api/auth/native/confirm-otp', { otp_code: otpCode, account_id: firstId, return_to: '/' }, request)))
+      attempts.push(await describe('B(select-account)',
+        () => postWeb(session, '/api/auth/native/select-account', { account_id: firstId }, request)))
     }
-    throw new Error(`account selection probe — ${labels}; probe(a1 confirm-otp+account_id): ${probe}`)
+    throw new Error(`account selection probe — ${labels}; ${attempts.join('; ') || 'no probe'}`)
   }
   if (data.checkpoint_required || data.checkpoint_url || data.reactivation_required || data.account_selection_required) {
     session.stage = 'error'
@@ -267,7 +269,7 @@ export async function advanceWebLogin(session: BrowserSetupSession, action: stri
     throw new Error('Invalid login step')
   }
   session.error = undefined
-  return acceptCredentials(session, response, sdkToken, request)
+  return acceptCredentials(session, response, sdkToken, request, action === 'otp' ? value : undefined)
 }
 
 export function browserSetupError(error: unknown): BrowserSetupIssue {
@@ -275,14 +277,14 @@ export function browserSetupError(error: unknown): BrowserSetupIssue {
     const type = string(error.problem.type)
     const rawDetail = string(error.problem.message) ?? string(error.problem.error_message) ??
       string(error.problem.detail) ?? string(error.problem.error_description)
-    const detail = rawDetail?.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 320)
+    const detail = rawDetail?.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 480)
     return { kind: 'upstream', status: error.status,
       ...(type && /^[A-Za-z0-9_./-]{1,100}$/.test(type) ? { type } : {}),
       ...(detail ? { detail } : {}) }
   }
   if (error instanceof Error && error.message === 'Invalid login step') return { kind: 'invalid_step' }
   if (error instanceof Error) {
-    const detail = error.message.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 320)
+    const detail = error.message.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 480)
     return { kind: 'generic', ...(detail ? { detail } : {}) }
   }
   return { kind: 'generic' }
